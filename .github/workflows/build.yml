@@ -1,0 +1,60 @@
+# Builds the desktop app for Windows, Apple Silicon Macs and Intel Macs on
+# GitHub's machines. Each build self-tests the finished app before it is zipped.
+#
+# Run it from the repository's Actions tab ("Build apps" > "Run workflow"), or
+# by pushing a tag such as v1.0. The zips appear under the run's "Artifacts".
+name: Build apps
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  mac:
+    name: Mac (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build, self-test and zip
+        run: packaging/build_mac.sh ${{ matrix.arch }}
+        env:
+          PYTHON: python3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sanitization-Bureau-mac-${{ matrix.arch }}
+          path: dist/Sanitization-Bureau-mac-${{ matrix.arch }}.zip
+          compression-level: 0  # already a zip
+
+  windows:
+    name: Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build, self-test and zip
+        shell: pwsh
+        run: ./packaging/build_windows.ps1
+        env:
+          PYTHON: python
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sanitization-Bureau-windows-x64
+          path: dist/Sanitization-Bureau-windows-x64.zip
+          compression-level: 0

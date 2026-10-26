@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Sanitization Bureau</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-screen="intake">
+
+<div class="banner" id="banner">UNCLASSIFIED // NO DOCUMENT ON FILE</div>
+
+<!-- ============================ INTAKE ============================ -->
+<section id="intake" class="screen">
+  <div class="folder">
+    <div class="folder-tab">FILE&nbsp;RD-61</div>
+    <div class="folder-body">
+      <div class="agency">
+        <div class="seal" aria-hidden="true"><span>★</span></div>
+        <div>
+          <div class="agency-name">Document Sanitization Bureau</div>
+          <div class="agency-sub">Office of Records Declassification &middot; Form RD-61</div>
+        </div>
+      </div>
+
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="file" accept="application/pdf,.pdf" hidden>
+        <div class="tray-label">IN&nbsp;TRAY</div>
+        <div class="drop-main">Deposit document here</div>
+        <div class="drop-sub">drag a PDF onto this tray, or click to select one</div>
+      </label>
+
+      <ol class="orders">
+        <li><b>All work is performed on this machine.</b> The document is held in memory only &mdash; never written to disk, never transmitted.</li>
+        <li><b>You decide what is struck.</b> Mark text or regions for <span class="ink">BLACKOUT</span> or <span class="scr">SCRAMBLE</span>; everything else is preserved so the layout survives.</li>
+        <li><b>Struck material is destroyed, not hidden.</b> Text is cut from the file, image pixels wiped, metadata, comments, bookmarks, links and attachments purged.</li>
+      </ol>
+      <div class="intake-msg" id="intake-msg" role="alert"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ REVIEW ============================ -->
+<section id="review" class="screen">
+  <aside class="dossier">
+    <div class="card">
+      <h2>Instrument</h2>
+      <div class="seg" role="group" aria-label="Tool">
+        <button data-tool="text" class="on" title="Select words (T)"><span><u>T</u>ext</span></button>
+        <button data-tool="area" title="Draw a region (A)"><span><u>A</u>rea</span></button>
+      </div>
+      <h2>Method</h2>
+      <div class="seg" role="group" aria-label="Method">
+        <button data-method="blackout" class="on" title="Black ink bar (B)"><span class="sw ink-sw"></span><span><u>B</u>lackout</span></button>
+        <button data-method="scramble" title="Random characters, same shape (S)"><span class="sw scr-sw"></span><span><u>S</u>cramble</span></button>
+      </div>
+      <p class="hint" id="tool-hint"></p>
+    </div>
+
+    <div class="card">
+      <h2>Search &amp; mark</h2>
+      <div class="search-row">
+        <input type="text" id="search" placeholder="word, phrase or pattern" spellcheck="false" autocomplete="off">
+        <label class="chk" title="Treat the search as a regular expression"><input type="checkbox" id="regex"> re</label>
+      </div>
+      <div class="chips" id="presets">
+        <button data-preset="email">Emails</button>
+        <button data-preset="phone">Phones</button>
+        <button data-preset="date">Dates</button>
+        <button data-preset="ids">IDs &amp; acct nos.</button>
+        <button data-preset="money">Money</button>
+        <button data-preset="url">URLs</button>
+      </div>
+      <div class="search-result">
+        <span id="search-count">&nbsp;</span>
+        <button class="small" id="mark-all" disabled>Mark all</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Withdraw pages</h2>
+      <div class="search-row">
+        <input type="text" id="page-list" placeholder="e.g. 3, 7-12" spellcheck="false" autocomplete="off">
+        <button class="small" id="withdraw-pages">Withdraw</button>
+      </div>
+      <div class="search-result">
+        <span id="pages-status">&nbsp;</span>
+        <button class="small ghost" id="reinstate-all" hidden>Reinstate all</button>
+      </div>
+      <p class="hint error" id="pages-msg"></p>
+    </div>
+
+    <div class="card grow">
+      <h2>Dossier <span class="count" id="mark-count">0</span></h2>
+      <ul class="marks" id="marks"></ul>
+      <p class="empty" id="marks-empty">No marks yet. Drag across text in the document to mark it.</p>
+    </div>
+
+    <div class="card cargo" id="cargo"></div>
+
+    <div class="actions">
+      <label class="chk" title="Scanned documents often carry an invisible OCR text layer. By default it is stripped."><input type="checkbox" id="keep-hidden"> Retain invisible OCR text layer</label>
+      <button class="stamp-btn" id="process">Sanitize</button>
+      <div class="row">
+        <button class="small ghost" id="undo" title="Undo (Ctrl/Cmd+Z)">Undo</button>
+        <button class="small ghost" id="clear-marks">Clear marks</button>
+        <button class="small danger" data-burn>Burn &amp; exit</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="desk" id="pages"></main>
+</section>
+
+<!-- ============================ DEBRIEF ============================ -->
+<section id="debrief" class="screen">
+  <aside class="dossier">
+    <div class="card">
+      <h2>Inspection report</h2>
+      <ul class="checks" id="checks"></ul>
+      <p class="stats" id="stats"></p>
+    </div>
+    <div class="card warn" id="leaks-card" hidden>
+      <h2>Possible leaks</h2>
+      <p class="hint">These terms were struck somewhere but still appear elsewhere in the document.</p>
+      <ul class="leaks" id="leaks"></ul>
+      <button class="small" id="mark-leaks">Mark all &amp; return to review</button>
+    </div>
+    <div class="card">
+      <h2>What a machine will read</h2>
+      <p class="hint">The complete text layer of the sanitized file &mdash; exactly what a parser or AI model would extract.</p>
+      <button class="small" id="show-text">Show text layer</button>
+    </div>
+    <div class="actions">
+      <a class="stamp-btn green" id="download" href="#">Download sanitized PDF</a>
+      <p class="hint save-msg" id="save-msg" role="status"></p>
+      <div class="row">
+        <button class="small ghost" id="back">&larr; Back to review</button>
+        <button class="small danger" data-burn>Burn &amp; exit</button>
+      </div>
+    </div>
+  </aside>
+  <main class="desk" id="out-pages"></main>
+</section>
+
+<!-- ============================ OVERLAYS ============================ -->
+<div class="modal" id="pw-modal" hidden>
+  <form class="modal-card" id="pw-form">
+    <h2>Restricted document</h2>
+    <p>This file is password protected. Enter the password to open it. It is used once, in memory, and not kept.</p>
+    <input type="password" id="pw" autocomplete="off">
+    <div class="row">
+      <button type="button" class="small ghost" id="pw-cancel">Cancel</button>
+      <button type="submit" class="small">Open</button>
+    </div>
+  </form>
+</div>
+
+<div class="modal" id="text-modal" hidden>
+  <div class="modal-card wide">
+    <h2>Text layer of sanitized file</h2>
+    <div id="text-layer" class="text-layer"></div>
+    <div class="row"><button class="small" id="text-close">Close</button></div>
+  </div>
+</div>
+
+<div class="busy" id="busy" hidden><div class="busy-card"><div class="busy-title" id="busy-title">Processing</div><div class="typing"></div></div></div>
+
+<div class="banner bottom" id="banner-bottom">UNCLASSIFIED // NO DOCUMENT ON FILE</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
