@@ -14,7 +14,7 @@ import math
 import re
 import secrets
 
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF
 
 BLACKOUT = "blackout"
 SCRAMBLE = "scramble"

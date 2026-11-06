@@ -1,7 +1,7 @@
 # Builds "Sanitization Bureau" for Windows -- a standalone app with Python and
 # every library bundled inside -- then self-tests it and zips it for sharing.
 #
-# Needs Python 3.10-3.13 from python.org. In PowerShell, from the project folder:
+# Needs Python 3.11-3.13 from python.org. In PowerShell, from the project folder:
 #
 #   powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 #

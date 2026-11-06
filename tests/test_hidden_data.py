@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import fitz  # noqa: E402
+import pymupdf as fitz  # noqa: E402
 
 from redactor.engine import (RedactionJob, _flatten_marked_content, _instructions,  # noqa: E402
                              _jpeg_without_metadata, _leftover_structures, _orphan_pages)
@@ -63,11 +63,11 @@ def check(ok, label, detail=""):
 
 
 def add_form(doc, page, name, body, extra=""):
-    font = doc.get_new_xref()
-    doc.update_object(font, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    # The font dictionary is inline on purpose: PyMuPDF before 1.26.6 corrupts memory on it.
     x = doc.get_new_xref()
-    doc.update_object(x, "<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] "
-                         "/Resources << /Font << /helv %d 0 R >> >> %s >>" % (font, extra))
+    doc.update_object(x, "<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] /Resources "
+                         "<< /Font << /helv << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> "
+                         "%s >>" % extra)
     doc.update_stream(x, body, new=True)
     kind, value = doc.xref_get_key(page.xref, "Resources")
     if kind == "xref":

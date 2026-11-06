@@ -19,13 +19,18 @@ case "$ARCH" in
 esac
 
 # Each architecture gets its own Python environment; a cross build runs every
-# Python step through `arch` so the right half of the universal Python is used.
+# Python step through `arch`, so it needs a Python with that architecture (universal,
+# or `uv python install cpython-3.13-macos-x86_64-none` for Intel). An environment
+# on a Python that's too old or the wrong architecture is rebuilt.
 if [ "$ARCH" = "$HOST_ARCH" ]; then VENV=".venv"; RUN=(); else VENV=".venv-$ARCH"; RUN=(arch "-$ARCH"); fi
 PY=(${RUN[@]+"${RUN[@]}"} "$VENV/bin/python")
 
-if [ ! -x "$VENV/bin/python" ]; then
-  echo "Creating $VENV ($ARCH)..."
-  ${RUN[@]+"${RUN[@]}"} "${PYTHON:-/usr/bin/python3}" -m venv "$VENV"
+source packaging/find_python.sh
+if ! python_ok "$ARCH" "${PY[@]}"; then
+  BASE="$(find_python "$ARCH" ${RUN[@]+"${RUN[@]}"})" || { echo "$PYTHON_HELP"; exit 1; }
+  echo "Creating $VENV ($ARCH) with $BASE..."
+  rm -rf "$VENV"
+  ${RUN[@]+"${RUN[@]}"} "$BASE" -m venv "$VENV"
   "${PY[@]}" -m pip install -q --upgrade pip
 fi
 "${PY[@]}" -m pip install -q -r requirements.txt -r packaging/requirements-build.txt

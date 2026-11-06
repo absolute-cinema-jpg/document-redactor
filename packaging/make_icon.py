@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-import fitz
+import pymupdf as fitz
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redactor.engine import _ink_polygon  # noqa: E402

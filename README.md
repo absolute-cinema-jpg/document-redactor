@@ -45,6 +45,8 @@ and download the zips from the finished run's **Artifacts**.
 ./run.sh
 ```
 
+This needs Python 3.11 or later, which macOS doesn't include: install it from
+[python.org](https://www.python.org/downloads/) or with `uv python install 3.13`.
 The first run creates a private Python environment (`.venv/`) and installs
 PyMuPDF, Flask and fontTools. After that it opens http://127.0.0.1:1961 in your
 browser. Press Ctrl+C in the terminal to shut it down. If that port is busy, it

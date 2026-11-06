@@ -3,7 +3,7 @@
 import os
 import sys
 
-import fitz
+import pymupdf as fitz
 
 FONT_DIR = "/System/Library/Fonts/Supplemental"
 
