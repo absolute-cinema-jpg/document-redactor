@@ -4,16 +4,22 @@
 """
 
 import os
+import random
 import re
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import fitz  # noqa: E402
+import pymupdf as fitz  # noqa: E402
 
 from make_sample import build  # noqa: E402
+from redactor import engine  # noqa: E402
 from redactor.engine import RedactionJob  # noqa: E402
+
+# Scrambles normally draw from OS entropy, and about 1 run in 100 one lands on a value in
+# SECRETS by chance. A fixed seed gives the same draws every run, so a failure is a real one.
+engine._rng = random.Random(1961)
 
 SECRETS = ["Jonathan", "Smithers", "1428", "Springfield", "62704", "555-0143",
            "j.smithers@example.com", "2291", "4471", "0093", "03/14/2025",
