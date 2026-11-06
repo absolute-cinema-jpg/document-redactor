@@ -120,8 +120,12 @@ function renderCargo() {
   if (s.annotations) items.push(`${s.annotations} comment(s) / annotation(s)`);
   if (s.bookmarks) items.push(`${s.bookmarks} bookmark(s)`);
   if (s.embedded_files) items.push(`${s.embedded_files} attached file(s)`);
-  if (s.form_fields) items.push(`${s.form_fields} form field value(s) — reset`);
+  if (s.form_fields) items.push(`${s.form_fields} form field(s) — removed, with their values and names`);
   if (s.invisible_spans) items.push(`${s.invisible_spans} run(s) of invisible text (unless retained below)`);
+  if (s.concealed_text) items.push(`${s.concealed_text} run(s) of concealed text (covered, blending in or microscopic)`);
+  if (s.hidden_layers) items.push(`${s.hidden_layers} hidden layer(s)`);
+  if (s.past_the_edge) items.push(`${s.past_the_edge} page(s) with content outside the visible page`);
+  if (s.tagged) items.push("accessibility tags, which can hold alt text and page references");
   const el = $("#cargo");
   el.innerHTML = "";
   if (!s.word_count) {

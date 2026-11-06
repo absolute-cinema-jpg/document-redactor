@@ -323,6 +323,585 @@ def _group_line_rects(words, indices):
 
 
 # --------------------------------------------------------------------------
+# Text that is in the file but can't be seen
+# --------------------------------------------------------------------------
+
+_TINY_TEXT_PT = 1.5     # nobody reads this size: microscopic text is a hiding place
+_VISIBLE_DELTA = 10     # grey levels of change a span must cause to count as visible
+_EVERYWHERE = fitz.Rect(-1e5, -1e5, 1e5, 1e5)
+
+
+def _span_is_blank(span):
+    return not "".join(chr(c[0]) for c in span.get("chars", ()) if c[0] > 0).strip()
+
+
+def _strike_rect(span):
+    """The span's box, pulled in so a redaction can't clip neighbouring text."""
+    r = fitz.Rect(span["bbox"])
+    chars = span.get("chars") or ()
+    left = fitz.Rect(chars[0][3]).width if chars else 0
+    right = fitz.Rect(chars[-1][3]).width if chars else 0
+    return fitz.Rect(r.x0 + left * 0.25, r.y0 + r.height * 0.25,
+                     r.x1 - right * 0.25, r.y1 - r.height * 0.25)
+
+
+def _pixels_differ(a, b, box):
+    """Does `box` (pixel coordinates) differ between two same-sized grey pixmaps?"""
+    x0, y0 = max(0, int(box.x0)), max(0, int(box.y0))
+    x1, y1 = min(a.width, math.ceil(box.x1)), min(a.height, math.ceil(box.y1))
+    if x1 <= x0 or y1 <= y0:
+        return True  # nothing on the page to compare: off-page text is handled separately
+    sa, sb, stride = a.samples_mv, b.samples_mv, a.stride
+    for y in range(y0, y1):
+        ra, rb = sa[y * stride + x0:y * stride + x1], sb[y * stride + x0:y * stride + x1]
+        if ra != rb and any(abs(p - q) >= _VISIBLE_DELTA for p, q in zip(ra, rb)):
+            return True
+    return False
+
+
+def _drop_annotations(doc):
+    """Comments, stamps, notes and form fields all live in /Annots. Clearing it before any
+    page is loaded means no annotation or widget objects to outlive the document, which
+    has crashed PyMuPDF. Call this straight after opening."""
+    for pno in range(doc.page_count):
+        doc.xref_set_key(doc.page_xref(pno), "Annots", "null")
+
+
+def _concealed_text(pdf_bytes):
+    """Find text a reader can't see but a text extractor can: under a drawn box or an
+    image, white on white, fully transparent, or microscopic. For each page returns the
+    rects to strike, in the same coordinates as words.
+
+    Whether a span shows is measured, not guessed from its colour: the page is rendered
+    with and without its text, and a span that changes no pixels is concealed. A hidden
+    span overlapping visible text changes pixels, so it is left alone rather than risk
+    deleting something the reader can see."""
+    work = fitz.open(stream=pdf_bytes, filetype="pdf")
+    found = {}
+    try:
+        # Field and annotation appearances show up in the trace but are removed separately.
+        _drop_annotations(work)
+        for pno in range(work.page_count):
+            page = work[pno]
+            spans = [s for s in page.get_texttrace()
+                     if s.get("type") != 3 and not _span_is_blank(s)]
+            if not spans:
+                continue
+            hits = [s for s in spans if s["size"] < _TINY_TEXT_PT]
+            rest = [s for s in spans if s["size"] >= _TINY_TEXT_PT]
+            if rest:
+                zoom = 1.5
+                mat = fitz.Matrix(zoom, zoom)
+                full = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY, annots=False, alpha=False)
+                rotate = page.rotation_matrix * mat
+                page.add_redact_annot(_EVERYWHERE, fill=False, cross_out=False)
+                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
+                                      graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+                                      text=fitz.PDF_REDACT_TEXT_REMOVE)
+                # If some text couldn't be lifted the comparison proves nothing.
+                if not page.get_texttrace():
+                    bare = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY, annots=False, alpha=False)
+                    hits += [s for s in rest
+                             if not _pixels_differ(full, bare, (fitz.Rect(s["bbox"]) * rotate).normalize())]
+            if hits:
+                found[pno] = [fitz.Rect(s["bbox"]) for s in hits]
+    finally:
+        work.close()
+    return found
+
+
+def _strike_concealed(page, rects):
+    """Lift concealed text out of the page. Rects come from _concealed_text()."""
+    wanted = [fitz.Rect(r) for r in rects]
+    strikes = [_strike_rect(s) for s in page.get_texttrace()
+               if any(fitz.Rect(s["bbox"]).intersects(r) for r in wanted)]
+    strikes = [r for r in strikes if not r.is_empty]
+    if not strikes:
+        return
+    for r in strikes:
+        page.add_redact_annot(r, fill=False, cross_out=False)
+    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
+                          graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+                          text=fitz.PDF_REDACT_TEXT_REMOVE)
+
+
+def _visible_box(page):
+    """The part of the page a reader sees, in the coordinates redactions use."""
+    return (page.rect * page.derotation_matrix).normalize()
+
+
+def _past_the_edge(page):
+    """Is anything drawn outside the visible page (including outside a crop)?"""
+    box = _visible_box(page) + (-1, -1, 1, 1)
+    try:
+        log = page.get_bboxlog()
+    except Exception:
+        return True
+    return any(not fitz.Rect(item[1]).is_empty and not box.contains(fitz.Rect(item[1])) for item in log) \
+        or any(not box.contains(fitz.Rect(s["bbox"])) for s in page.get_texttrace() if not _span_is_blank(s))
+
+
+def _strip_past_the_edge(page):
+    """Off-page text, images and art print nowhere but stay in the file. Page crops
+    work the same way, so this also removes what a crop was hiding."""
+    if not _past_the_edge(page):
+        return
+    box, far = _visible_box(page), 1e5
+    for r in (fitz.Rect(-far, -far, far, box.y0), fitz.Rect(-far, box.y1, far, far),
+              fitz.Rect(-far, box.y0, box.x0, box.y1), fitz.Rect(box.x1, box.y0, far, box.y1)):
+        page.add_redact_annot(r, fill=False, cross_out=False)
+    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS,
+                          graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED,
+                          text=fitz.PDF_REDACT_TEXT_REMOVE)
+
+
+def _wipe_image_masks(doc, page, rects):
+    """MuPDF wipes an image's own pixels under a mark but not its transparency mask, so a
+    shape stored in the mask would survive. Each image hit gets a private, wiped copy."""
+    rects = [r for r in rects if not r.is_empty]
+    if not rects:
+        return
+    for item in page.get_images(full=True):
+        xref, smask = item[0], item[1]
+        stencil = doc.xref_get_key(xref, "Mask")
+        if not smask and stencil[0] != "xref":
+            continue
+        try:
+            placed = page.get_image_rects(xref, transform=True)
+        except Exception:
+            placed = []
+        hit = [(r, m) for bbox, m in placed for r in rects if bbox.intersects(r)]
+        if not hit:
+            continue
+        pix = None
+        if smask:
+            try:
+                pix = fitz.Pixmap(doc, smask)
+                pix = pix if pix.n == 1 and not pix.alpha else None
+            except Exception:
+                pix = None
+        if pix is None:
+            # A stencil or unreadable mask: replace it with a fully transparent one.
+            pix = fitz.Pixmap(fitz.csGRAY, 1, 1, b"\0", False)
+            region = [pix.irect]
+        else:
+            region = []
+            for r, m in hit:
+                # image space is the unit square; a singular matrix means "wipe all"
+                unit = (r * ~m).normalize() if m.is_rectilinear or abs(m.a * m.d - m.b * m.c) > 1e-9 else None
+                if unit is None:
+                    region = [pix.irect]
+                    break
+                box = fitz.Rect(unit.x0 * pix.width - 1, unit.y0 * pix.height - 1,
+                                unit.x1 * pix.width + 1, unit.y1 * pix.height + 1).irect & pix.irect
+                if not box.is_empty:
+                    region.append(box)
+        for box in region:
+            pix.set_rect(box, (0,))
+        fresh = doc.get_new_xref()
+        doc.update_object(fresh, "<< /Type /XObject /Subtype /Image /Width %d /Height %d "
+                                 "/ColorSpace /DeviceGray /BitsPerComponent 8 >>" % (pix.width, pix.height))
+        doc.update_stream(fresh, bytes(pix.samples), new=True)
+        doc.xref_set_key(xref, "SMask", "%d 0 R" % fresh)
+        _drop_keys(doc, xref, [k for k in ("Mask", "Matte") if doc.xref_get_key(xref, k)[0] != "null"])
+
+
+# --------------------------------------------------------------------------
+# Content streams: hidden layers and marked content
+# --------------------------------------------------------------------------
+
+_WS = frozenset(b"\x00\t\n\x0c\r ")
+_NOT_REGULAR = _WS | frozenset(b"()<>[]{}/%")
+_NUMBER = re.compile(rb"^[+-]?(?:\d+\.?\d*|\.\d+)$")
+_INLINE_END = re.compile(rb"[\x00\t\n\x0c\r ]EI(?=[\x00\t\n\x0c\r ]|$)")
+_SHOW_TEXT = {b"Tj", b"TJ"}
+_MOVE_AND_SHOW = {b"'", b'"'}
+_PAINT_PATH = {b"f", b"F", b"f*", b"B", b"B*", b"b", b"b*", b"S", b"s"}
+_MARKED_OPS = re.compile(rb"(?<![^\x00\t\n\x0c\r )>\]])(?:BDC|BMC|EMC|MP|DP)(?![^\x00\t\n\x0c\r (</\[])")
+
+
+def _skip_ws(data, i):
+    n = len(data)
+    while i < n:
+        if data[i] in _WS:
+            i += 1
+        elif data[i] == 0x25:  # comment
+            while i < n and data[i] not in b"\r\n":
+                i += 1
+        else:
+            break
+    return i
+
+
+def _end_of_regular(data, i):
+    n = len(data)
+    while i < n and data[i] not in _NOT_REGULAR:
+        i += 1
+    return i
+
+
+def _end_of_string(data, i):
+    depth, n = 0, len(data)
+    while i < n:
+        c = data[i]
+        if c == 0x5c:
+            i += 2
+            continue
+        if c == 0x28:
+            depth += 1
+        elif c == 0x29:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    raise ValueError("unterminated string")
+
+
+def _end_of_hex(data, i):
+    end = data.find(b">", i)
+    if end < 0:
+        raise ValueError("unterminated hex string")
+    return end + 1
+
+
+def _end_of_composite(data, i):
+    """End of the [array] or <<dict>> at i. Iterative, so hostile nesting can't overflow."""
+    depth, n = 0, len(data)
+    while i < n:
+        i = _skip_ws(data, i)
+        if i >= n:
+            break
+        c, pair = data[i], data[i:i + 2]
+        if pair == b"<<" or c == 0x5b:
+            depth += 1
+            i += 2 if pair == b"<<" else 1
+        elif pair == b">>" or c == 0x5d:
+            depth -= 1
+            i += 2 if pair == b">>" else 1
+            if depth == 0:
+                return i
+        elif c == 0x28:
+            i = _end_of_string(data, i)
+        elif c == 0x3c:
+            i = _end_of_hex(data, i)
+        elif c == 0x2f:
+            i = _end_of_regular(data, i + 1)
+        else:
+            i = max(_end_of_regular(data, i), i + 1)
+    raise ValueError("unterminated array or dictionary")
+
+
+def _instructions(data):
+    """Split a content stream into (operator, operands, raw bytes). Raises ValueError on
+    anything it can't parse: callers must treat that as a failure, not skip the stream."""
+    i, n, start, operands = 0, len(data), None, []
+    while True:
+        i = _skip_ws(data, i)
+        if i >= n:
+            break
+        if start is None:
+            start = i
+        c, pair = data[i], data[i:i + 2]
+        if c == 0x28:
+            end = _end_of_string(data, i)
+        elif pair == b"<<" or c == 0x5b:
+            end = _end_of_composite(data, i)
+        elif c == 0x3c:
+            end = _end_of_hex(data, i)
+        elif c == 0x2f:
+            end = _end_of_regular(data, i + 1)
+        elif c in _NOT_REGULAR:
+            raise ValueError("unexpected %r in content stream" % bytes((c,)))
+        else:
+            end = _end_of_regular(data, i)
+            word = data[i:end]
+            if not (_NUMBER.match(word) or word in (b"true", b"false", b"null")):
+                if word == b"ID":  # inline image: raw bytes up to EI
+                    m = _INLINE_END.search(data, end)
+                    if not m:
+                        raise ValueError("unterminated inline image")
+                    end = m.end()
+                yield word, operands, data[start:end]
+                i, start, operands = end, None, []
+                continue
+        operands.append(data[i:end])
+        i = end
+    if operands:
+        yield None, operands, data[start:]
+
+
+def _flatten_marked_content(data, oc_hidden, xobject_hidden):
+    """Rewrite a content stream with marked content gone. That takes /ActualText, /Alt and
+    similar text out of the stream, and content on a hidden layer with it. Graphics state
+    inside a hidden section is kept, because visible content after it may depend on it."""
+    out, stack, hidden = [], [], 0
+    for op, operands, raw in _instructions(data):
+        if op == b"BMC":
+            stack.append(False)
+        elif op == b"BDC":
+            is_hidden = len(operands) >= 2 and operands[0] == b"/OC" and oc_hidden(operands[1])
+            stack.append(is_hidden)
+            hidden += is_hidden
+        elif op == b"EMC":
+            if stack:
+                hidden -= stack.pop()
+        elif op in (b"MP", b"DP"):
+            pass
+        elif op == b"Do" and (hidden or (operands and xobject_hidden(operands[-1]))):
+            pass
+        elif hidden and op in (_SHOW_TEXT | {b"sh", b"BI", b"ID"}):
+            pass
+        elif hidden and op in _MOVE_AND_SHOW:
+            out.append(b"T*")
+        elif hidden and op in _PAINT_PATH:
+            out.append(b"n")
+        else:
+            out.append(raw)
+    return b"\n".join(out)
+
+
+class _Layers:
+    """Which optional-content groups (layers) are off in the document's default view."""
+
+    def __init__(self, doc):
+        self.doc = doc
+        self.ocgs = doc.get_ocgs() or {}
+        self.cache = {}
+
+    def _ve(self, node):
+        if isinstance(node, int):
+            return self.ocgs.get(node, {"on": True})["on"]
+        if not node:
+            return True
+        op, rest = node[0], node[1:]
+        if op == "not":
+            return not self._ve(rest[0])
+        results = [self._ve(x) for x in rest]
+        return all(results) if op == "and" else any(results)
+
+    def _visible(self, xref):
+        if xref in self.ocgs:
+            return self.ocgs[xref]["on"]
+        if self.doc.xref_get_key(xref, "Type")[1] == "/OCG":
+            return True  # not listed in /OCProperties: viewers show it
+        try:
+            md = self.doc.get_ocmd(xref)
+        except Exception:
+            return False  # can't tell what controls it: don't keep it
+        if md.get("ve"):
+            return self._ve(md["ve"])
+        states = [self.ocgs.get(x, {"on": True})["on"] for x in md.get("ocgs") or []]
+        if not states:
+            return True
+        return {"AllOn": all(states), "AnyOff": not all(states),
+                "AllOff": not any(states)}.get(md.get("policy"), any(states))
+
+    def hidden(self, xref):
+        if xref not in self.cache:
+            self.cache[xref] = not self._visible(xref)
+        return self.cache[xref]
+
+
+def _resource_xref(doc, owner, kind, name):
+    """Follow Resources/<kind>/<name> from a page or form, including page-tree inheritance."""
+    name = re.sub(r"#([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), name)
+    for _ in range(64):
+        typ, val = doc.xref_get_key(owner, "Resources/%s/%s" % (kind, name))
+        if typ == "xref":
+            return int(val.split()[0])
+        if doc.xref_get_key(owner, "Resources")[0] != "null":
+            return None
+        parent = doc.xref_get_key(owner, "Parent")
+        if parent[0] != "xref":
+            return None
+        owner = int(parent[1].split()[0])
+    return None
+
+
+def _flatten_stream(doc, owner, data, layers):
+    def oc_hidden(operand):
+        if not operand.startswith(b"/"):
+            return True  # OC must name a resource: anything else can't be classified
+        xref = _resource_xref(doc, owner, "Properties", operand[1:].decode("latin-1"))
+        return xref is not None and layers.hidden(xref)
+
+    def xobject_hidden(operand):
+        if not layers.ocgs or not operand.startswith(b"/"):
+            return False
+        xref = _resource_xref(doc, owner, "XObject", operand[1:].decode("latin-1"))
+        if xref is None:
+            return False
+        typ, val = doc.xref_get_key(xref, "OC")
+        return typ == "xref" and layers.hidden(int(val.split()[0]))
+
+    return _flatten_marked_content(data, oc_hidden, xobject_hidden)
+
+
+def _flatten_document(doc):
+    """Hidden-layer and marked content out of every page, form and tiling pattern.
+    Returns how many streams couldn't be parsed: their contents can't be vouched for."""
+    layers, failures = _Layers(doc), 0
+    for page in doc:
+        data = page.read_contents()
+        if not data:
+            continue
+        try:
+            new = _flatten_stream(doc, page.xref, data, layers)
+        except ValueError:
+            failures += 1
+            continue
+        # A new stream: the old ones may be shared with other pages.
+        fresh = doc.get_new_xref()
+        doc.update_object(fresh, "<<>>")
+        doc.update_stream(fresh, new, new=True)
+        page.set_contents(fresh)
+    for xref in range(1, doc.xref_length()):
+        if not doc.xref_is_stream(xref):
+            continue
+        if doc.xref_get_key(xref, "Subtype")[1] != "/Form" and doc.xref_get_key(xref, "PatternType")[1] != "1":
+            continue
+        data = doc.xref_stream(xref) or b""
+        try:
+            new = _flatten_stream(doc, xref, data, layers)
+        except ValueError:
+            failures += 1
+            continue
+        if new != data:
+            doc.update_stream(xref, new)
+    return failures
+
+
+# --------------------------------------------------------------------------
+# File structure: keep only what rendering needs
+# --------------------------------------------------------------------------
+
+# Allowlists rather than a list of known-bad keys: a PDF can carry private data under any
+# key at all, and a key nobody has heard of is precisely the one a blocklist would miss.
+_KEEP_CATALOG = {"Type", "Pages", "Version"}
+_KEEP_PAGE = {"Type", "Parent", "Resources", "MediaBox", "CropBox", "Rotate", "Contents", "UserUnit", "Group"}
+_KEEP_PAGES = {"Type", "Parent", "Kids", "Count", "Resources", "MediaBox", "CropBox", "Rotate"}
+_KEEP_FORM = {"Type", "Subtype", "FormType", "BBox", "Matrix", "Resources", "Group",
+              "Length", "Filter", "DecodeParms"}
+_KEEP_IMAGE = {"Type", "Subtype", "Width", "Height", "ColorSpace", "BitsPerComponent", "Intent",
+               "ImageMask", "Mask", "Decode", "Interpolate", "SMask", "SMaskInData", "Matte",
+               "Length", "Filter", "DecodeParms"}
+# Anywhere else, these never affect how a page looks and are known to hold text.
+_DROP_ANYWHERE = {"PieceInfo", "Metadata", "LastModified", "AF", "AA", "OC", "OPI", "Alternates", "Ref",
+                  "Thumb", "StructParent", "StructParents", "Properties"}
+_FORBIDDEN = re.compile(r"(?<![A-Za-z0-9#])/(StructTreeRoot|StructElem|MarkInfo|StructParents?|ActualText|Alt|"
+                        r"PieceInfo|OCProperties|OCGs?|OCMD|OC|AcroForm|Widget|DV|TU|PageLabels|Dests|OPI|"
+                        r"Alternates|Metadata|LastModified|Thumb|AF|AA|OpenAction|Properties)(?![A-Za-z0-9])")
+
+
+def _drop_keys(doc, xref, paths):
+    """Remove dictionary entries outright: setting one to null leaves a /Key null stub."""
+    for path in paths:
+        doc.xref_set_key(xref, path, "null")
+    obj = doc.xref_object(xref, compressed=True)
+    for path in paths:
+        obj = re.sub(r"/%s\s+null(?![A-Za-z0-9])" % re.escape(path.split("/")[-1]), "", obj)
+    doc.update_object(xref, obj)
+
+
+def _keep_only(doc, xref, keep):
+    drop = [key for key in doc.xref_get_keys(xref) if key not in keep]
+    if drop:
+        _drop_keys(doc, xref, drop)
+
+
+def _strip_structure(doc):
+    """Reduce the catalog, page tree and XObjects to what rendering needs. This also cuts
+    the references (structure elements, form fields, named destinations) that would
+    otherwise keep a withdrawn page's objects in the file through garbage collection."""
+    catalog = doc.pdf_catalog()
+    _keep_only(doc, catalog, _KEEP_CATALOG)
+    pages = {doc.page_xref(i) for i in range(doc.page_count)}
+    for xref in range(1, doc.xref_length()):
+        try:
+            keys = doc.xref_get_keys(xref)
+        except Exception:
+            continue
+        if not keys or xref == catalog:
+            continue
+        typ, subtype = doc.xref_get_key(xref, "Type")[1], doc.xref_get_key(xref, "Subtype")[1]
+        if xref in pages:
+            _keep_only(doc, xref, _KEEP_PAGE)
+        elif typ == "/Pages":
+            _keep_only(doc, xref, _KEEP_PAGES)
+        elif subtype == "/Form" and doc.xref_is_stream(xref):
+            _keep_only(doc, xref, _KEEP_FORM)
+        elif subtype == "/Image" and doc.xref_is_stream(xref):
+            _keep_only(doc, xref, _KEEP_IMAGE)
+        else:
+            _keep_only(doc, xref, set(keys) - _DROP_ANYWHERE)
+        # An inline Resources dictionary. An indirect one is an object of its own, which
+        # _DROP_ANYWHERE has already handled, and a path can't cross a reference anyway.
+        if doc.xref_get_key(xref, "Resources")[0] == "dict" \
+                and doc.xref_get_key(xref, "Resources/Properties")[0] != "null":
+            _drop_keys(doc, xref, ["Resources/Properties"])
+
+
+def _jpeg_without_metadata(data):
+    """Drop JPEG segments that only carry metadata (EXIF, GPS, XMP, comments) without
+    re-encoding. APP0 (JFIF), APP2 (ICC) and APP14 (Adobe colour) affect how it decodes."""
+    if data[:2] != b"\xff\xd8":
+        return None
+    out, i, n, changed = [data[:2]], 2, len(data), False
+    while i + 4 <= n and data[i] == 0xFF:
+        marker = data[i + 1]
+        if marker == 0xFF:
+            i += 1
+            continue
+        if marker == 0xDA:  # start of scan: everything after this is image data
+            break
+        size = int.from_bytes(data[i + 2:i + 4], "big")
+        if size < 2 or i + 2 + size > n:
+            return None
+        if (0xE0 <= marker <= 0xEF and marker not in (0xE0, 0xE2, 0xEE)) or marker == 0xFE:
+            changed = True
+        else:
+            out.append(data[i:i + 2 + size])
+        i += 2 + size
+    out.append(data[i:])
+    return b"".join(out) if changed else None
+
+
+def _strip_jpeg_metadata(doc):
+    for xref in range(1, doc.xref_length()):
+        if not doc.xref_is_stream(xref) or doc.xref_get_key(xref, "Subtype")[1] != "/Image":
+            continue
+        if doc.xref_get_key(xref, "Filter")[1] != "/DCTDecode":
+            continue
+        clean = _jpeg_without_metadata(doc.xref_stream_raw(xref) or b"")
+        if clean is not None:
+            doc.update_stream(xref, clean, compress=False)
+            doc.xref_set_key(xref, "Filter", "/DCTDecode")
+
+
+def _orphan_pages(doc):
+    """Page objects still in the file but not in the page tree: recoverable pages."""
+    live = {doc.page_xref(i) for i in range(doc.page_count)}
+    return [x for x in range(1, doc.xref_length())
+            if x not in live and doc.xref_get_key(x, "Type")[1] == "/Page"]
+
+
+def _leftover_structures(doc):
+    """Names of hidden-data carriers still anywhere in the file."""
+    found = set()
+    catalog = doc.pdf_catalog()
+    found.update(k for k in doc.xref_get_keys(catalog) if k not in _KEEP_CATALOG)
+    for xref in range(1, doc.xref_length()):
+        try:
+            obj = doc.xref_object(xref, compressed=True)
+        except Exception:
+            continue
+        if "/Differences" in obj:  # glyph names, which can be anything
+            continue
+        found.update(_FORBIDDEN.findall(obj))
+    return found
+
+
+# --------------------------------------------------------------------------
 # Document session
 # --------------------------------------------------------------------------
 
@@ -347,6 +926,7 @@ class RedactionJob:
         self._data = data
         self.doc = doc
         self.words = [_words(p) for p in doc]
+        self.concealed = _concealed_text(data)
         self.output = None
         self.output_doc = None
 
@@ -391,6 +971,10 @@ class RedactionJob:
             "bookmarks": len(self.doc.get_toc()),
             "form_fields": sum(len(list(p.widgets())) for p in self.doc),
             "word_count": sum(len(w) for w in self.words),
+            "concealed_text": sum(len(v) for v in self.concealed.values()),
+            "hidden_layers": sum(1 for g in (self.doc.get_ocgs() or {}).values() if not g["on"]),
+            "tagged": self.doc.xref_get_key(self.doc.pdf_catalog(), "StructTreeRoot")[0] != "null",
+            "past_the_edge": sum(1 for p in self.doc if _past_the_edge(p)),
         }
 
     def render(self, pno, zoom=2.0, output=False):
@@ -426,13 +1010,17 @@ class RedactionJob:
         stats = {"blackout_words": 0, "scrambled_words": 0, "areas": 0, "pages_touched": 0,
                  "pages_removed": len(removed)}
 
-        # Strip annotations (comments, stamps, sticky notes...) first: they
-        # carry free text the user never saw in the preview.
-        for page in doc:
-            for xref in [a.xref for a in page.annots()]:
-                page.delete_annot(page.load_annot(xref))
+        # Strip annotations (comments, stamps, sticky notes...) and form fields first:
+        # they carry free text the user never saw in the preview. Field names, tooltips
+        # and default values are all readable, so resetting a field isn't enough.
+        _drop_annotations(doc)
 
         for pno in keep:
+            page = doc[pno]
+            if self.concealed.get(pno):
+                _strike_concealed(page, self.concealed[pno])
+            _strip_past_the_edge(page)
+
             pmarks = by_page.get(pno, [])
             page = doc[pno]
             words = self.words[pno]
@@ -487,6 +1075,9 @@ class RedactionJob:
                 page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS,
                                       graphics=fitz.PDF_REDACT_LINE_ART_NONE,
                                       text=fitz.PDF_REDACT_TEXT_REMOVE)
+            _wipe_image_masks(doc, page, [r for r, _m in areas] +
+                              [_pad(fitz.Rect(words[i][:4]), pad) if pad else fitz.Rect(words[i][:4])
+                               for i in wsel])
             # Must happen before scrambled text is drawn, or it would catch that too.
             if not keep_hidden_text:
                 _strip_invisible(page)
@@ -514,9 +1105,9 @@ class RedactionJob:
             stats["scrambled_words"] += len(scram_words)
             stats["areas"] += len(areas)
 
-        # Withdrawn pages: dropped from the page tree here; garbage collection
-        # on save then discards their content streams and any images, fonts or
-        # other objects that nothing else uses.
+        # Withdrawn pages: dropped from the page tree here. Garbage collection on save
+        # then discards their content streams and any images, fonts or other objects
+        # that nothing else uses, once _strip_structure has cut the other references.
         if removed:
             doc.select(keep)
 
@@ -531,16 +1122,9 @@ class RedactionJob:
         doc.set_metadata({})
         doc.del_xml_metadata()
         doc.set_toc([])
-        cat = doc.pdf_catalog()
-        if doc.xref_get_key(cat, "Names/EmbeddedFiles")[0] != "null":
-            doc.xref_set_key(cat, "Names/EmbeddedFiles", "null")
-        if doc.xref_get_key(cat, "PageMode")[1] in ("/UseAttachments", "/UseOutlines"):
-            doc.xref_set_key(cat, "PageMode", "/UseNone")
-        # Drop the now-null entries outright rather than leaving stubs behind.
-        obj = doc.xref_object(cat, compressed=True)
-        obj = re.sub(r"/(EmbeddedFiles|Outlines) null", "", obj)
-        obj = re.sub(r"/Names\s*<<\s*>>", "", obj)
-        doc.update_object(cat, obj)
+        unparsed = _flatten_document(doc)  # needs layer info, so before the catalog goes
+        _strip_structure(doc)
+        _strip_jpeg_metadata(doc)
         try:
             # Re-subset fonts so glyphs only used by redacted text are dropped.
             doc.subset_fonts()
@@ -555,15 +1139,57 @@ class RedactionJob:
             self.output_doc.close()
         self.output = out
         self.output_doc = fitz.open(stream=out, filetype="pdf")
-        report = self._verify(record, keep, keep_hidden_text)
+        report = self._verify(record, keep, keep_hidden_text, unparsed)
         report["stats"] = stats
         report["size_bytes"] = len(out)
         return report
 
     # ---- verification ------------------------------------------------------
 
-    def _verify(self, record, keep, keep_hidden_text=False):
+    def _check_hidden_data(self, out, record, unparsed=0):
+        """Re-inspect the finished file for anything a reader can't see."""
+        problems = []
+        orphans = _orphan_pages(out)
+        if orphans:
+            problems.append("%d page object(s) left outside the page tree" % len(orphans))
+        leftover = _leftover_structures(out)
+        if leftover:
+            problems.append("hidden structures remain: " + ", ".join(sorted(leftover)))
+        if unparsed:
+            problems.append("%d content stream(s) could not be read and may hide content" % unparsed)
+        for page in out:
+            try:
+                data = page.read_contents() or b""
+                if any(op in (b"BDC", b"BMC", b"MP", b"DP") for op, _o, _r in _instructions(data)):
+                    problems.append("marked content remains on page %d" % (page.number + 1))
+                    break
+            except ValueError:
+                problems.append("content stream on page %d could not be read" % (page.number + 1))
+                break
+        concealed, past = 0, 0
+        marked = {}  # a mark's bar or scramble may legitimately sit over or be the text
+        for pno, items in record.items():
+            marked[pno] = [r for r, _m, _o in items]
+        found = _concealed_text(self.output)
+        for i, rects in found.items():
+            orig = self._kept[i]
+            near = [m for m in marked.get(orig, [])]
+            concealed += sum(1 for r in rects if not any(r.intersects(m) for m in near))
+        for page in out:
+            box = _visible_box(page) + (-1, -1, 1, 1)
+            past += sum(1 for s in page.get_texttrace()
+                        if not _span_is_blank(s) and not box.contains(fitz.Rect(s["bbox"])))
+        if concealed:
+            problems.append("%d run(s) of concealed text remain" % concealed)
+        if past:
+            problems.append("%d run(s) of text remain outside the page" % past)
+        return {"label": "No concealed text, hidden layers or private data", "ok": not problems,
+                "detail": "structure, layers and text visibility verified" if not problems
+                else "; ".join(problems)}
+
+    def _verify(self, record, keep, keep_hidden_text=False, unparsed=0):
         out = self.output_doc
+        self._kept = keep
         checks = []
         out_index = {orig: i for i, orig in enumerate(keep)}
         removed = [p for p in range(len(self.words)) if p not in out_index]
@@ -635,6 +1261,7 @@ class RedactionJob:
                     flagged.add(label)
         checks.append({"label": "No scripts, links or hidden payloads", "ok": not flagged,
                        "detail": "raw object scan clean" if not flagged else ", ".join(sorted(flagged))})
+        checks.append(self._check_hidden_data(out, record, unparsed))
 
         # 5. Leaks: terms the user redacted that still appear elsewhere.
         terms = {}
@@ -663,8 +1290,10 @@ class RedactionJob:
                 # unstruck occurrences in the original -- this also catches words
                 # that are still visible in a scanned image after its OCR layer
                 # was stripped from the text
+                gone = self.concealed.get(pno, ())  # lifted out, so not a repeat anyone can see
                 idx = [i for i, w in enumerate(words) if hits(t, _norm(w[4]))
-                       and i not in selected.get(pno, set())]
+                       and i not in selected.get(pno, set())
+                       and not any(fitz.Rect(w[:4]).intersects(r) for r in gone)]
                 if idx:
                     occ.append({"page": pno, "words": idx})
                     pages_hit.add(pno)
@@ -686,6 +1315,9 @@ class RedactionJob:
         problems = []
         if out.page_count != len(keep):
             problems.append("page count is %d, expected %d" % (out.page_count, len(keep)))
+        orphans = _orphan_pages(out)
+        if orphans:
+            problems.append("%d page object(s) still recoverable from the file" % len(orphans))
 
         kept_tokens = {_norm(w[4]) for p in keep for w in self.words[p]}
         exclusive = {_norm(w[4]) for p in removed for w in self.words[p]} - kept_tokens

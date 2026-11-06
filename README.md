@@ -101,14 +101,18 @@ This needs `pip install -r packaging/requirements-build.txt` first.
 
 | Thing | What happens |
 |---|---|
-| Withdrawn pages | Removed from the page tree, then garbage-collected along with any fonts and images only they used. The inspection report verifies that their words and images are absent. |
+| Withdrawn pages | Removed from the page tree, then garbage-collected along with any fonts and images only they used. Everything that could keep a page object alive (accessibility tags, form fields, named destinations) goes too. The inspection report verifies that their words, images and page objects are absent. |
 | Marked text | Removed from the page content stream (MuPDF redaction). The bar or scramble is drawn afterwards, on top of nothing. |
-| Images under a mark | The pixels inside the mark are overwritten in the image itself. |
+| Images under a mark | The pixels inside the mark are overwritten in the image itself, and in its transparency mask. |
 | Vector art in an *area* | Removed if fully covered, e.g. a signature drawn as paths. Word marks leave line art alone so table rules and underlines survive. |
 | Invisible text (OCR layers) | Stripped by default. There is an option to retain it. |
-| Metadata (Info dictionary, XMP) | Wiped. |
+| Concealed text | Text under a drawn box or image, text that blends into its background, and text under 1.5pt is removed. The page is rendered with and without its text, and a run that changes no pixels counts as concealed. |
+| Hidden layers | Content on layers that are off is removed. Layers that are on become ordinary page content. |
+| Anything outside the page | Text, images and art off the page or outside a crop are removed. |
+| Metadata (Info dictionary, XMP, JPEG EXIF/GPS) | Wiped. Only the keys rendering needs are kept on the catalog, pages and images, so private data under unknown keys goes too. |
 | Comments, notes, stamps, other annotations | Deleted. |
-| Form fields | Values reset. The fields themselves stay because they are structure. |
+| Form fields | Removed, with their values, names, tooltips and defaults. The output isn't fillable. |
+| Accessibility tags | Removed, because they hold alt text and point back at pages. **The output is an untagged PDF**, which is worse for screen readers. |
 | Bookmarks, links, attachments, JavaScript, thumbnails | Removed. |
 | Fonts | Re-subset, best effort, so glyphs used only by redacted text are dropped. |
 | The file itself | Rebuilt from scratch (`garbage=4`) with no incremental-save history, and decrypted. |
@@ -129,6 +133,13 @@ The app itself:
   it is a signal. The random characters come from OS entropy and can't be
   reversed. Scramble picks the candidate whose width best fits the original
   slot, and that width is already visible on the page.
+- **Concealed text that overlaps visible text** stays, because lifting it could
+  delete something you can see. Its box changes pixels, so it doesn't count as
+  concealed. If an unexpected word shows up in the text layer in the debrief,
+  strike that line with **Area**.
+- **Pixels hidden by a clipping path** stay. An image cropped by a clip inside the
+  page keeps its full data. Off-page parts are wiped, but use **Area** on anything
+  sensitive that a clip is only hiding. JPEG 2000 images keep any embedded metadata.
 - **Scanned pages.** Selectable text on a scan is an OCR layer that may not sit
   exactly on the printed glyphs. Strikes on scanned pages are padded slightly,
   but always check the released preview and use **Area** for anything that
@@ -145,7 +156,13 @@ The app itself:
 
 ```bash
 .venv/bin/python tests/test_engine.py [output_dir]
+.venv/bin/python tests/test_hidden_data.py
 ```
+
+`test_hidden_data.py` plants data everywhere a PDF can hide it (tags, hidden layers,
+form fields, off-page and covered text, private keys, transparency masks, JPEG EXIF),
+then searches every object and decoded stream of the output for it. It also proves
+the inspection checks fail when that data is really there.
 
 This builds a fake insurance claim full of traps: metadata, XMP, a sticky
 note holding an SSN, a link, bookmarks, an attachment, subset-embedded fonts,

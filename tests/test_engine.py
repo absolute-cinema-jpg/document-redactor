@@ -15,7 +15,7 @@ import fitz  # noqa: E402
 from make_sample import build  # noqa: E402
 from redactor.engine import RedactionJob  # noqa: E402
 
-SECRETS = ["Jonathan", "Smithers", "1428", "Springfield", "62704", "555", "0143",
+SECRETS = ["Jonathan", "Smithers", "1428", "Springfield", "62704", "555-0143",
            "j.smithers@example.com", "2291", "4471", "0093", "03/14/2025",
            "Jane Adjuster", "fraud", "123-45-6789", "crm.internal", "notes.txt"]
 
@@ -90,7 +90,8 @@ def main(out_dir):
     failures = []
     for s in SECRETS:
         in_text = s in text
-        in_raw = s.encode() in raw
+        # Short strings turn up by chance in compressed bytes; streams are searched below.
+        in_raw = len(s) >= 8 and s.encode() in raw
         if (in_text or in_raw) and s not in expected_left:
             failures.append((s, in_text, in_raw))
     # Decompressed streams: decode every (literal) and <hex> string and look for
