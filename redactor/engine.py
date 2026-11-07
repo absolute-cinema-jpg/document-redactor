@@ -70,6 +70,12 @@ def scramble_text(text, pools=None):
     return "".join(out)
 
 
+def _can_scramble(text):
+    """Whether scramble_text would replace anything in `text`. It keeps everything else,
+    so a word of only punctuation comes back as it was."""
+    return any(ch.isdigit() or ch.isalpha() for ch in text)
+
+
 def _base14(fontname, flags):
     n = (fontname or "").lower()
     bold = bool(flags & 16) or any(k in n for k in ("bold", "black", "heavy", "semibold"))
@@ -167,10 +173,22 @@ def _draw_ink(page, rects):
 def _best_fit(word_text, pools, measure, target_width, tries=48):
     """Draw many independent random scrambles and keep the one whose natural
     width is closest to the original slot. The slot width is already visible
-    on the page, so choosing by it reveals nothing about the original text."""
+    on the page, so choosing by it reveals nothing about the original text.
+
+    A draw of the original is thrown away, because it fits its own slot exactly and would
+    almost always win. Each letter stays independent, so the result can still share letters
+    with the original. Only a word with nothing to scramble comes back unchanged. The loop
+    ends because every pool has at least 5 characters (_insert_scrambled checks this)."""
+    if not _can_scramble(word_text):
+        return word_text
+    original = _norm(word_text)
     best, best_err = None, None
-    for _ in range(tries):
+    draws = 0
+    while draws < tries or best is None:
+        draws += 1
         cand = scramble_text(word_text, pools)
+        if _norm(cand) == original:
+            continue
         err = abs(measure(cand) - target_width)
         if best is None or err < best_err:
             best, best_err = cand, err
@@ -1198,14 +1216,19 @@ class RedactionJob:
         failures = []
         for pno, items in record.items():
             page = out[out_index[pno]]
+            out_words = page.get_text("words")
             for rect, method, original in items:
                 probe = fitz.Rect(rect.x0 + rect.width * 0.2, rect.y0 + rect.height * 0.25,
                                   rect.x1 - rect.width * 0.2, rect.y1 - rect.height * 0.25)
                 got = page.get_textbox(probe).strip() if not probe.is_empty else ""
                 if method == BLACKOUT and got and _norm(got) and _norm(got) in _norm(original):
                     failures.append({"page": pno + 1, "text": got})
-                if method == SCRAMBLE and len(original) >= 3 and _norm(got) == _norm(original):
-                    failures.append({"page": pno + 1, "text": got})
+                # Whole words here: the probe trims narrow letters at a word's edges, so `got`
+                # for a surviving "Wi" is "W". Punctuation is kept by design, so it can't fail.
+                if method == SCRAMBLE and _can_scramble(original) and any(
+                        _norm(w[4]) == _norm(original) and fitz.Rect(w[:4]).intersects(probe)
+                        for w in out_words):
+                    failures.append({"page": pno + 1, "text": original})
         total = sum(len(v) for v in record.values())
         checks.append({
             "label": "Marked text purged from text layer",

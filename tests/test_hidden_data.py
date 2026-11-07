@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pymupdf as fitz  # noqa: E402
 
+from redactor import engine  # noqa: E402
 from redactor.engine import (RedactionJob, _flatten_marked_content, _instructions,  # noqa: E402
                              _jpeg_without_metadata, _leftover_structures, _orphan_pages)
 
@@ -370,6 +371,73 @@ def test_scrambled_over_cover_not_flagged():
     job.close()
 
 
+def scramble_once(word):
+    """Scramble `word` through the real pipeline. Returns whether it is still in the saved
+    file, read back separately from the engine's check, and that check's verdict."""
+    d = fitz.open()
+    d.new_page().insert_text((72, 80), "State %s and more words" % word, fontsize=11)
+    job = RedactionJob(d.tobytes())
+    idx = [i for i, w in enumerate(job.words[0]) if w[4] == word]
+    assert len(idx) == 1, (word, idx)
+    report = job.process([{"page": 0, "type": "words", "words": idx, "method": "scramble"}])
+    verdict = next(c for c in report["checks"] if c["label"] == "Marked text purged from text layer")
+    saved = fitz.open(stream=job.output, filetype="pdf")
+    survived = word in [w[4] for w in saved[0].get_text("words")]
+    saved.close()
+    job.close()
+    return survived, verdict["ok"]
+
+
+def test_scramble_changes_the_word():
+    print("\n-- a scramble never leaves the marked word in place --")
+    # Before the fix these words survived often (IL 6.66%, CA 0.96% of draws), so even the
+    # rarest here would be missed about 1 run in 200 million at 2000 draws.
+    measure = lambda t: fitz.get_text_length(t, fontname="helv", fontsize=11)  # noqa: E731
+    for word in ("IL", "Jo", "Al", "CA"):
+        width = measure(word)
+        kept = sum(engine._best_fit(word, None, measure, width) == word for _ in range(2000))
+        check(kept == 0, "%s changes in 2000 draws" % word, "%d kept" % kept)
+    # A small pool, as a subset font can have: most sets of 48 draws include the original.
+    pools = {"upper": "ILMNO", "lower": "aeiou", "digits": "01234"}
+    kept = sum(engine._best_fit("IL", pools, measure, measure("IL")) == "IL" for _ in range(2000))
+    check(kept == 0, "IL changes in 2000 draws from a small pool", "%d kept" % kept)
+    results = {engine._best_fit("I", {"upper": "IJKLM"}, measure, measure("I"), tries=1) for _ in range(500)}
+    check(results == set("JKLM"), "a draw of the original is replaced even on the last try", str(results))
+
+    # End to end: would have been missed about 1 run in 250 million at the old 6.25%.
+    runs = [scramble_once("IL") for _ in range(300)]
+    check(not any(s for s, _ok in runs), "IL gone from the saved file in 300 scrambles",
+          "%d survived" % sum(s for s, _ok in runs))
+    check(all(ok for _s, ok in runs), "the check passes on all 300")
+
+    # The fix must not make letters depend on the original, which would leak it: "IL" has to
+    # stay a possible draw, and a kept result can still share a letter with the original.
+    check("IL" in {engine.scramble_text("IL") for _ in range(20000)}, "scramble_text can still draw the original")
+    kept = {engine._best_fit("IL", None, measure, measure("IL")) for _ in range(2000)}
+    check(len(kept) >= 10, "results still vary", str(sorted(kept)))
+    check(any(k[0] == "I" or k[1] == "L" for k in kept), "a result can still share a letter with the original",
+          str(sorted(kept)))
+
+    print("\n-- words with nothing to scramble --")
+    for word in ("&", "---", "_", "\u00bd"):
+        survived, ok = scramble_once(word)
+        check(survived, "%s is kept" % word)
+        check(ok, "%s isn't reported as still readable" % word)
+        check(engine._best_fit(word, None, measure, measure(word)) == word, "%s comes back unchanged" % word)
+
+    print("\n-- control: the check fails when the word really survives --")
+    real = engine._best_fit
+    engine._best_fit = lambda word, *_args, **_kw: word
+    try:
+        # "Wi", "WiI" and "Illinois" have narrow edge letters that the check's probe trims.
+        for word in ("IL", "Jo", "A", "7", "Wi", "(IL)", "Lee", "WiI", "Illinois"):
+            survived, ok = scramble_once(word)
+            check(survived, "control: %s really survives" % word)
+            check(not ok, "check fails on a surviving %s" % word)
+    finally:
+        engine._best_fit = real
+
+
 def test_jpeg():
     print("\n-- JPEG metadata --")
     gps = b"Exif\0\0CANARYGPSLOCATION"
@@ -420,6 +488,7 @@ def main():
     test_soft_mask()
     test_rendering_kept()
     test_scrambled_over_cover_not_flagged()
+    test_scramble_changes_the_word()
     test_jpeg()
     test_stream_parser()
     print("\n%s" % ("FAIL: %d problem(s): %s" % (len(failures), failures) if failures else "PASS"))

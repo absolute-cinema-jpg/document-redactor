@@ -134,7 +134,9 @@ The app itself:
   punctuation) and capitalisation. That is the point for format learning, but
   it is a signal. The random characters come from OS entropy and can't be
   reversed. Scramble picks the candidate whose width best fits the original
-  slot, and that width is already visible on the page.
+  slot, and that width is already visible on the page. It never keeps the
+  original word. A word with no letters or digits, such as `&` or `---`, has
+  nothing to scramble and stays as it is, so use Blackout for those.
 - **Concealed text that overlaps visible text** stays, because lifting it could
   delete something you can see. Its box changes pixels, so it doesn't count as
   concealed. If an unexpected word shows up in the text layer in the debrief,
