@@ -1,10 +1,24 @@
 # Document Sanitization Bureau — Form RD-61
 
-A local, privacy-first PDF redactor. You open a PDF, mark what has to go, and it
-produces a copy where that material is **actually destroyed**, not just covered,
-while the layout, fonts, tables and structure are left intact. The aim is to
-produce PDFs that are safe to hand to an AI model so it can learn how a kind of
-document is laid out.
+A local, privacy-first tool for removing sensitive information from PDFs. Open a
+PDF and mark what has to go: names, addresses, account numbers, signatures,
+photos, whole pages. You get a copy where that material is **actually
+destroyed**, not just covered with a black box. Everything you didn't mark,
+including the layout, fonts and tables, is left as it was, so the document still
+looks and reads like the original.
+
+Everything happens on your own computer. Nothing is uploaded, and there are no
+accounts and no network connections.
+
+## The look
+
+The interface is styled after a 1960s CIA records office: manila folders,
+typewriter type, rubber-stamp buttons, and a classification banner that turns
+from red **TOP SECRET** to green **CLEARED FOR RELEASE** once a document has
+passed inspection. Blackouts are rough, hand-inked marker bars, modelled on
+declassified Cold War memos, and they appear that way in the finished PDF too.
+The app uses only fonts already on your computer, so it never has to download
+anything.
 
 ## Running it
 
@@ -93,8 +107,8 @@ This needs `pip install -r packaging/requirements-build.txt` first.
    - **possible leaks**: terms you struck in one place that still appear
      elsewhere, including inside emails and URLs and words printed in a scanned
      image. One click marks them all.
-   - **what a machine will read**: the full text layer of the output. This is
-     exactly what a parser or an AI model gets.
+   - **text left in the file**: the full text layer of the output, i.e.
+     everything anyone could copy, search or extract from it.
 4. **Download** the result as `SANITIZED-XXXXXX.pdf`. The name is neutral because
    the original filename can itself be confidential. **Burn & exit** wipes the
    document from memory. Closing the tab does the same.
