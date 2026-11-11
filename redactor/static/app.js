@@ -1,5 +1,5 @@
 "use strict";
-/* Document Sanitization Bureau -- client.
+/* Document Redactor -- client.
    Talks only to the local server it was served from. */
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -664,7 +664,7 @@ async function processDoc() {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || "The bureau could not process this document.");
+      throw new Error(err.error || "This document could not be processed.");
     }
     S.report = await res.json();
     showDebrief();

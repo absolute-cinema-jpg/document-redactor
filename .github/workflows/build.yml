@@ -36,8 +36,8 @@ jobs:
           PYTHON: python3
       - uses: actions/upload-artifact@v4
         with:
-          name: Sanitization-Bureau-mac-${{ matrix.arch }}
-          path: dist/Sanitization-Bureau-mac-${{ matrix.arch }}.zip
+          name: Document-Redactor-mac-${{ matrix.arch }}
+          path: dist/Document-Redactor-mac-${{ matrix.arch }}.zip
           compression-level: 0  # already a zip
 
   windows:
@@ -55,6 +55,6 @@ jobs:
           PYTHON: python
       - uses: actions/upload-artifact@v4
         with:
-          name: Sanitization-Bureau-windows-x64
-          path: dist/Sanitization-Bureau-windows-x64.zip
+          name: Document-Redactor-windows-x64
+          path: dist/Document-Redactor-windows-x64.zip
           compression-level: 0

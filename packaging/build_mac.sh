@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds "Sanitization Bureau.app" -- a standalone, double-clickable Mac app with
+# Builds "Document Redactor.app" -- a standalone, double-clickable Mac app with
 # Python and every library bundled inside -- then self-tests it and zips it for
 # sharing.
 #
@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP="Sanitization Bureau"
+APP="Document Redactor"
 HOST_ARCH="$(uname -m)"
 ARCH="${1:-$HOST_ARCH}"
 case "$ARCH" in
@@ -43,17 +43,17 @@ rm -rf "$WORK" "$DIST/$APP.app"
 "${PY[@]}" -m PyInstaller --noconfirm --clean --log-level WARN \
   --windowed --name "$APP" --target-arch "$ARCH" \
   --icon "$PWD/packaging/icon.icns" \
-  --osx-bundle-identifier local.sanitization-bureau \
+  --osx-bundle-identifier local.document-redactor \
   --paths "$PWD" \
   --add-data "$PWD/redactor/static:redactor/static" \
   --hidden-import fontTools.subset --hidden-import fontTools.ttLib \
   --distpath "$DIST" --workpath "$WORK" --specpath "$WORK" \
-  packaging/bureau_app.py
+  packaging/launch_app.py
 
 BIN="$DIST/$APP.app/Contents/MacOS/$APP"
 echo "  binary: $(file -b "$BIN" | cut -c1-60)"
 
-if [ "${BUREAU_SKIP_SELFTEST:-0}" != "1" ]; then
+if [ "${REDACTOR_SKIP_SELFTEST:-0}" != "1" ]; then
   echo "Self-testing the built app..."
   TMP="$(mktemp -d)"
   "${PY[@]}" tests/make_sample.py "$TMP/sample.pdf"
@@ -74,7 +74,7 @@ STAGE="$WORK/stage/$APP"
 rm -rf "$WORK/stage" && mkdir -p "$STAGE"
 ditto "$DIST/$APP.app" "$STAGE/$APP.app"
 sed "s|{{MACHINE}}|$MACHINE|" packaging/READ_ME_FIRST.txt > "$STAGE/READ ME FIRST.txt"
-ZIP="dist/Sanitization-Bureau-mac-$ARCH.zip"
+ZIP="dist/Document-Redactor-mac-$ARCH.zip"
 rm -f "$ZIP"
 ditto -c -k --norsrc --keepParent "$STAGE" "$ZIP"
 rm -rf "$WORK/stage"

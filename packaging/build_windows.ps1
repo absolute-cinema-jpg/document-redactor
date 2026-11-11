@@ -1,4 +1,4 @@
-# Builds "Sanitization Bureau" for Windows -- a standalone app with Python and
+# Builds "Document Redactor" for Windows -- a standalone app with Python and
 # every library bundled inside -- then self-tests it and zips it for sharing.
 #
 # Needs Python 3.11-3.13 from python.org. In PowerShell, from the project folder:
@@ -9,7 +9,7 @@
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
-$App  = "Sanitization Bureau"
+$App  = "Document Redactor"
 $Venv = ".venv-win"
 $Py   = Join-Path $Venv "Scripts\python.exe"
 
@@ -38,13 +38,13 @@ if (Test-Path "$Dist\$App") { Remove-Item -Recurse -Force "$Dist\$App" }
     --add-data "$PWD\redactor\static;redactor\static" `
     --hidden-import fontTools.subset --hidden-import fontTools.ttLib `
     --distpath $Dist --workpath $Work --specpath $Work `
-    packaging\bureau_app.py
+    packaging\launch_app.py
 Check "PyInstaller"
 
 $Exe = Join-Path $Dist "$App\$App.exe"
-if ($env:BUREAU_SKIP_SELFTEST -ne "1") {
+if ($env:REDACTOR_SKIP_SELFTEST -ne "1") {
     Write-Host "Self-testing the built app..."
-    $Tmp = Join-Path $env:TEMP ("bureau-" + [guid]::NewGuid())
+    $Tmp = Join-Path $env:TEMP ("redactor-" + [guid]::NewGuid())
     New-Item -ItemType Directory -Path $Tmp | Out-Null
     & $Py tests\make_sample.py "$Tmp\sample.pdf"; Check "making the sample PDF"
     $proc = Start-Process -FilePath $Exe -PassThru `
@@ -60,7 +60,7 @@ $Stage = Join-Path $Work "stage\$App"
 New-Item -ItemType Directory -Path $Stage -Force | Out-Null
 Copy-Item -Recurse "$Dist\$App\*" $Stage
 Copy-Item packaging\READ_ME_FIRST_windows.txt (Join-Path $Stage "READ ME FIRST.txt")
-$Zip = "dist\Sanitization-Bureau-windows-x64.zip"
+$Zip = "dist\Document-Redactor-windows-x64.zip"
 if (Test-Path $Zip) { Remove-Item -Force $Zip }
 Compress-Archive -Path (Join-Path $Work "stage\$App") -DestinationPath $Zip
 Remove-Item -Recurse -Force (Join-Path $Work "stage")

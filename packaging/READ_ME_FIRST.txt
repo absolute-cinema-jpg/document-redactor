@@ -1,5 +1,5 @@
-DOCUMENT SANITIZATION BUREAU
-============================
+DOCUMENT REDACTOR
+=================
 
 Removes confidential information from PDFs while keeping their layout.
 Everything happens on your Mac. Nothing is uploaded anywhere.
@@ -7,7 +7,7 @@ Everything happens on your Mac. Nothing is uploaded anywhere.
 
 INSTALLING
 ----------
-Drag "Sanitization Bureau" into your Applications folder (or anywhere you like).
+Drag "Document Redactor" into your Applications folder (or anywhere you like).
 
 
 OPENING IT THE FIRST TIME
@@ -18,7 +18,7 @@ will warn you that it can't check it. This only happens once.
   macOS 15 (Sequoia) or newer:
     1. Double-click the app. When the warning appears, click "Done".
     2. Open System Settings > Privacy & Security.
-    3. Scroll down. Next to the message about "Sanitization Bureau",
+    3. Scroll down. Next to the message about "Document Redactor",
        click "Open Anyway", then confirm.
 
   macOS 14 (Sonoma) or older:

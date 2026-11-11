@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts the Document Sanitization Bureau on http://127.0.0.1:1961
+# Starts the Document Redactor on http://127.0.0.1:1961
 set -euo pipefail
 cd "$(dirname "$0")"
 source packaging/find_python.sh

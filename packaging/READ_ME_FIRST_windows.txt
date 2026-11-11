@@ -1,5 +1,5 @@
-DOCUMENT SANITIZATION BUREAU
-============================
+DOCUMENT REDACTOR
+=================
 
 Removes confidential information from PDFs while keeping their layout.
 Everything happens on your computer. Nothing is uploaded anywhere.
@@ -9,9 +9,9 @@ INSTALLING
 ----------
 1. Right-click the zip file you were sent and choose "Extract All...".
    (Don't run the app from inside the zip -- it won't work.)
-2. Move the extracted "Sanitization Bureau" folder somewhere permanent,
+2. Move the extracted "Document Redactor" folder somewhere permanent,
    for example your Documents folder.
-3. Inside it, double-click "Sanitization Bureau.exe".
+3. Inside it, double-click "Document Redactor.exe".
    Tip: right-click it > "Show more options" > "Send to" > "Desktop (create
    shortcut)" to put it on your desktop.
 

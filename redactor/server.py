@@ -182,7 +182,7 @@ def _free_port(start, tries=20):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Local PDF redaction bureau")
+    ap = argparse.ArgumentParser(description="Document Redactor: remove sensitive information from PDFs")
     ap.add_argument("--port", type=int, default=1961)
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
@@ -194,7 +194,7 @@ def main():
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
     url = "http://127.0.0.1:%d/" % port
-    print("\n  DOCUMENT SANITIZATION BUREAU  //  FORM RD-61")
+    print("\n  DOCUMENT REDACTOR  //  FORM RD-61")
     if port != args.port:
         print("  (port %d is busy -- another copy may already be running)" % args.port)
     print("  Operating locally at %s" % url)

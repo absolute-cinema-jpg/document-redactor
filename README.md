@@ -1,4 +1,4 @@
-# Document Sanitization Bureau — Form RD-61
+# Document Redactor
 
 A local, privacy-first tool for removing sensitive information from PDFs. Open a
 PDF and mark what has to go: names, addresses, account numbers, signatures,
@@ -33,9 +33,9 @@ explains how to open the app the first time:
 
 | Zip | For | Built with |
 |---|---|---|
-| `dist/Sanitization-Bureau-mac-arm64.zip` | Apple Silicon Macs (M1 and later) | `packaging/build_mac.sh arm64` |
-| `dist/Sanitization-Bureau-mac-x86_64.zip` | Intel Macs (also runs on Apple Silicon) | `packaging/build_mac.sh x86_64`, which uses Rosetta on an Apple Silicon Mac |
-| `dist/Sanitization-Bureau-windows-x64.zip` | Windows 10 and 11 | `packaging\build_windows.ps1`, on a Windows PC |
+| `dist/Document-Redactor-mac-arm64.zip` | Apple Silicon Macs (M1 and later) | `packaging/build_mac.sh arm64` |
+| `dist/Document-Redactor-mac-x86_64.zip` | Intel Macs (also runs on Apple Silicon) | `packaging/build_mac.sh x86_64`, which uses Rosetta on an Apple Silicon Mac |
+| `dist/Document-Redactor-windows-x64.zip` | Windows 10 and 11 | `packaging\build_windows.ps1`, on a Windows PC |
 
 Every build self-tests the finished app (it opens the real window, sanitizes a
 sample and checks the result) before zipping it, and refuses to package a

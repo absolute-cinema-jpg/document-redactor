@@ -1,5 +1,5 @@
 """
-Desktop launcher: the Bureau in its own window. No terminal, no browser.
+Desktop launcher: the app in its own window. No terminal, no browser.
 
 The same local server runs inside this process on a private, randomly chosen
 port. The window is a native WebKit view in private mode, so nothing is cached
@@ -22,7 +22,7 @@ from werkzeug.serving import make_server
 
 from . import server
 
-TITLE = "Document Sanitization Bureau"
+TITLE = "Document Redactor"
 
 
 class Bridge:

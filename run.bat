@@ -1,5 +1,5 @@
 @echo off
-rem Starts the Document Sanitization Bureau in your browser (Windows, for development).
+rem Starts the Document Redactor in your browser (Windows, for development).
 cd /d "%~dp0"
 if not exist .venv-win\Scripts\python.exe (
   echo First run: setting up a private Python environment...
